@@ -71,6 +71,11 @@ func (r rawConn) Write(f func(fd uintptr) (done bool)) error {
 	panic("not implemented")
 }
 
+func (c *SCTPConn) Connect(addr *SCTPAddr) error {
+	_, err := SCTPConnect(c.fd(), addr)
+	return err
+}
+
 func (c *SCTPConn) SCTPWrite(b []byte, info *SndRcvInfo) (int, error) {
 	var cbuf []byte
 	if info != nil {
@@ -86,6 +91,35 @@ func (c *SCTPConn) SCTPWrite(b []byte, info *SndRcvInfo) (int, error) {
 		cbuf = append(toBuf(hdr), cmsgBuf...)
 	}
 	return syscall.SendmsgN(c.fd(), b, cbuf, nil, 0)
+}
+
+func (c *SCTPConn) SCTPWriteTo(b []byte, info *SndRcvInfo, endpoint SCTPEndpoint) (int, error) {
+	var cbuf []byte
+	if info != nil {
+		cmsgBuf := toBuf(info)
+		hdr := &syscall.Cmsghdr{
+			Level: syscall.IPPROTO_SCTP,
+			Type:  SCTP_CMSG_SNDRCV,
+		}
+
+		// bitwidth of hdr.Len is platform-specific,
+		// so we use hdr.SetLen() rather than directly setting hdr.Len
+		hdr.SetLen(syscall.CmsgSpace(len(cmsgBuf)))
+		cbuf = append(toBuf(hdr), cmsgBuf...)
+	}
+	sa, err := endpointToSockaddr(endpoint)
+	if err != nil {
+		return -1, err
+	}
+	return syscall.SendmsgN(c.fd(), b, cbuf, sa, 0)
+}
+
+func endpointToSockaddr(endpoint SCTPEndpoint) (syscall.Sockaddr, error) {
+	if endpoint.IPAddr.IP.To4() != nil {
+		return ipToSockaddr(syscall.AF_INET, endpoint.IPAddr.IP, endpoint.Port, endpoint.IPAddr.Zone)
+	} else {
+		return ipToSockaddr(syscall.AF_INET6, endpoint.IPAddr.IP, endpoint.Port, endpoint.IPAddr.Zone)
+	}
 }
 
 func parseSndRcvInfo(b []byte) (*SndRcvInfo, error) {
@@ -386,6 +420,85 @@ func dialSCTPExtConfig(network string, laddr, raddr *SCTPAddr, options InitMsg, 
 	sock, err := syscall.Socket(
 		af,
 		syscall.SOCK_STREAM,
+		syscall.IPPROTO_SCTP,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// close socket on error
+	defer func() {
+		if err != nil {
+			syscall.Close(sock)
+		}
+	}()
+	if err = setDefaultSockopts(sock, af, ipv6only); err != nil {
+		return nil, err
+	}
+	if control != nil {
+		rc := rawConn{sockfd: sock}
+		if err = control(network, laddr.String(), rc); err != nil {
+			return nil, err
+		}
+	}
+
+	//RTO
+	if rtoInfo != nil {
+		err = setRtoInfo(sock, *rtoInfo)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// AssocInfo
+	if assocInfo != nil {
+		err = setAssocInfo(sock, *assocInfo)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	err = setInitOpts(sock, options)
+	if err != nil {
+		return nil, err
+	}
+	if laddr != nil {
+		// If IP address and/or port was not provided so far, let's use the unspecified IPv4 or IPv6 address
+		if len(laddr.IPAddrs) == 0 {
+			if af == syscall.AF_INET {
+				laddr.IPAddrs = append(laddr.IPAddrs, net.IPAddr{IP: net.IPv4zero})
+			} else if af == syscall.AF_INET6 {
+				laddr.IPAddrs = append(laddr.IPAddrs, net.IPAddr{IP: net.IPv6zero})
+			}
+		}
+		err := SCTPBind(sock, laddr, SCTP_BINDX_ADD_ADDR)
+		if err != nil {
+			return nil, err
+		}
+	}
+	_, err = SCTPConnect(sock, raddr)
+	if err != nil {
+		return nil, err
+	}
+	return NewSCTPConn(sock, nil), nil
+}
+
+// DialSCTPOneToMany - bind socket to laddr (if given) and connect to raddr
+func DialSCTPOneToMany(net string, laddr, raddr *SCTPAddr) (*SCTPConn, error) {
+	return DialSCTPExtOneToMany(net, laddr, raddr, InitMsg{NumOstreams: SCTP_MAX_STREAM}, nil, nil)
+}
+
+// DialSCTPExtOneToMany - same as DialSCTP but with given SCTP options
+func DialSCTPExtOneToMany(network string, laddr, raddr *SCTPAddr, options InitMsg, rtoInfo *RtoInfo, assocInfo *AssocInfo) (*SCTPConn, error) {
+	return dialSCTPExtConfigOneToMany(network, laddr, raddr, options, rtoInfo, assocInfo, nil)
+}
+
+// dialSCTPExtConfigOneToMany - same as DialSCTP but with given SCTP options and socket configuration
+func dialSCTPExtConfigOneToMany(network string, laddr, raddr *SCTPAddr, options InitMsg, rtoInfo *RtoInfo, assocInfo *AssocInfo, control func(network, address string, c syscall.RawConn) error) (*SCTPConn, error) {
+	af, ipv6only := favoriteAddrFamily(network, laddr, raddr, "dial")
+	sock, err := syscall.Socket(
+		af,
+		syscall.SOCK_SEQPACKET,
 		syscall.IPPROTO_SCTP,
 	)
 	if err != nil {

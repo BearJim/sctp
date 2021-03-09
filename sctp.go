@@ -286,6 +286,11 @@ type SCTPAddr struct {
 	Port    int
 }
 
+type SCTPEndpoint struct {
+	IPAddr net.IPAddr
+	Port   int
+}
+
 func (a *SCTPAddr) ToRawSockAddrBuf() []byte {
 	p := htons(uint16(a.Port))
 	if len(a.IPAddrs) == 0 { // if a.IPAddrs list is empty - fall back to IPv4 zero addr
