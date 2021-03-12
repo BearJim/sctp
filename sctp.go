@@ -244,6 +244,10 @@ func setInitOpts(fd int, options InitMsg) error {
 	return err
 }
 
+func SetInitOpts(fd int, options InitMsg) error {
+	return setInitOpts(fd, options)
+}
+
 func getRtoInfo(fd int) (*RtoInfo, error) {
 	rtoInfo := RtoInfo{}
 	rtolen := unsafe.Sizeof(rtoInfo)
@@ -253,6 +257,10 @@ func getRtoInfo(fd int) (*RtoInfo, error) {
 	}
 
 	return &rtoInfo, err
+}
+
+func SetRtoInfo(fd int, rtoInfo RtoInfo) error {
+	return setRtoInfo(fd, rtoInfo)
 }
 
 func setRtoInfo(fd int, rtoInfo RtoInfo) error {
@@ -271,6 +279,10 @@ func getAssocInfo(fd int) (*AssocInfo, error) {
 	return &info, nil
 }
 
+func SetAssocInfo(fd int, info AssocInfo) error {
+	return setAssocInfo(fd, info)
+}
+
 func setAssocInfo(fd int, info AssocInfo) error {
 	optlen := unsafe.Sizeof(info)
 	_, _, err := setsockopt(fd, SCTP_ASSOCINFO, uintptr(unsafe.Pointer(&info)), uintptr(optlen))
@@ -284,11 +296,6 @@ func setNumOstreams(fd, num int) error {
 type SCTPAddr struct {
 	IPAddrs []net.IPAddr
 	Port    int
-}
-
-type SCTPEndpoint struct {
-	IPAddr net.IPAddr
-	Port   int
 }
 
 func (a *SCTPAddr) ToRawSockAddrBuf() []byte {
@@ -353,6 +360,11 @@ func (a *SCTPAddr) String() string {
 }
 
 func (a *SCTPAddr) Network() string { return "sctp" }
+
+func (a *SCTPAddr) ToSockaddr(idx int) syscall.Sockaddr {
+	s, _ := ipToSockaddr(a.family(), a.IPAddrs[idx].IP, a.Port, a.IPAddrs[idx].Zone)
+	return s
+}
 
 func ResolveSCTPAddr(network, addrs string) (*SCTPAddr, error) {
 	tcpnet := ""

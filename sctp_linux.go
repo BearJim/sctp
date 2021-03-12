@@ -19,6 +19,7 @@ package sctp
 import (
 	"io"
 	"net"
+	"strconv"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -93,7 +94,7 @@ func (c *SCTPConn) SCTPWrite(b []byte, info *SndRcvInfo) (int, error) {
 	return syscall.SendmsgN(c.fd(), b, cbuf, nil, 0)
 }
 
-func (c *SCTPConn) SCTPWriteTo(b []byte, info *SndRcvInfo, endpoint SCTPEndpoint) (int, error) {
+func (c *SCTPConn) SCTPSendTo(b []byte, info *SndRcvInfo, sa syscall.Sockaddr) (int, error) {
 	var cbuf []byte
 	if info != nil {
 		cmsgBuf := toBuf(info)
@@ -107,19 +108,7 @@ func (c *SCTPConn) SCTPWriteTo(b []byte, info *SndRcvInfo, endpoint SCTPEndpoint
 		hdr.SetLen(syscall.CmsgSpace(len(cmsgBuf)))
 		cbuf = append(toBuf(hdr), cmsgBuf...)
 	}
-	sa, err := endpointToSockaddr(endpoint)
-	if err != nil {
-		return -1, err
-	}
 	return syscall.SendmsgN(c.fd(), b, cbuf, sa, 0)
-}
-
-func endpointToSockaddr(endpoint SCTPEndpoint) (syscall.Sockaddr, error) {
-	if endpoint.IPAddr.IP.To4() != nil {
-		return ipToSockaddr(syscall.AF_INET, endpoint.IPAddr.IP, endpoint.Port, endpoint.IPAddr.Zone)
-	} else {
-		return ipToSockaddr(syscall.AF_INET6, endpoint.IPAddr.IP, endpoint.Port, endpoint.IPAddr.Zone)
-	}
 }
 
 func parseSndRcvInfo(b []byte) (*SndRcvInfo, error) {
@@ -190,6 +179,60 @@ func (c *SCTPConn) SCTPRead(b []byte) (int, *SndRcvInfo, Notification, error) {
 		}
 		return n, info, nil, err
 	}
+}
+
+func (c *SCTPConn) SCTPReadFrom(b []byte) (int, *SndRcvInfo, Notification, syscall.Sockaddr, error) {
+	oob := make([]byte, 254)
+	n, oobn, recvflags, from, err := syscall.Recvmsg(c.fd(), b, oob, 0)
+	if err != nil {
+		return n, nil, nil, nil, err
+	}
+
+	if n == 0 && oobn == 0 {
+		return 0, nil, nil, nil, io.EOF
+	}
+
+	if recvflags&MSG_NOTIFICATION > 0 {
+		notification := parseNotification(b[:n])
+		return n, nil, notification, from, nil
+	} else {
+		var info *SndRcvInfo
+		if oobn > 0 {
+			info, err = parseSndRcvInfo(oob[:oobn])
+		}
+		return n, info, nil, from, err
+	}
+}
+
+func SockaddrToSCTPAddr(sa syscall.Sockaddr) *SCTPAddr {
+	switch saddr := sa.(type) {
+	case *syscall.SockaddrInet4:
+		return &SCTPAddr{
+			IPAddrs: []net.IPAddr{
+				{IP: saddr.Addr[:]},
+			},
+			Port: saddr.Port,
+		}
+	case *syscall.SockaddrInet6:
+		return &SCTPAddr{
+			IPAddrs: []net.IPAddr{
+				{IP: saddr.Addr[:], Zone: ip6ZoneToString(int(saddr.ZoneId))},
+			},
+			Port: saddr.Port,
+		}
+	}
+	return nil
+}
+
+// from github.com/libp2p/go-sockaddr/net.go
+func ip6ZoneToString(zone int) string {
+	if zone == 0 {
+		return ""
+	}
+	if ifi, err := net.InterfaceByIndex(zone); err == nil {
+		return ifi.Name
+	}
+	return strconv.FormatInt(int64(zone), 10)
 }
 
 func (c *SCTPConn) Close() error {
