@@ -164,6 +164,17 @@ type AssocInfo struct {
 	CookieLife uint32
 }
 
+// type PAddrParams struct {
+// 	AssocID       SCTPAssocID
+// 	aa            unix.SockaddrStorage
+// 	HBInterval    uint32
+// 	PathMaxRxt    uint16
+// 	PathMtu       uint32
+// 	Flags         uint32
+// 	IPv6FlowLabel uint32
+// 	Dscp          uint8
+// }
+
 type SndRcvInfo struct {
 	Stream  uint16
 	SSN     uint16

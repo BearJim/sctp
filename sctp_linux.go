@@ -77,6 +77,21 @@ func (c *SCTPConn) Connect(addr *SCTPAddr) error {
 	return err
 }
 
+// func (c *SCTPConn) SetHeartBeatOpt(opt PAddrParams) error {
+// 	optlen := unsafe.Sizeof(opt)
+// 	_, _, err := setsockopt(c.fd(), SCTP_PEER_ADDR_PARAMS, uintptr(unsafe.Pointer(&opt)), uintptr(optlen))
+// 	return err
+// }
+
+func (c *SCTPConn) Abort() error {
+	err := syscall.SetsockoptLinger(c.fd(), syscall.SOL_SOCKET, syscall.SO_LINGER, &syscall.Linger{Onoff: 1, Linger: 0})
+	if err != nil {
+		return err
+	} else {
+		return syscall.Close(c.fd())
+	}
+}
+
 func (c *SCTPConn) SCTPWrite(b []byte, info *SndRcvInfo) (int, error) {
 	var cbuf []byte
 	if info != nil {
