@@ -691,13 +691,18 @@ func (c *SCTPConn) PeelOff(id int) (*SCTPConn, error) {
 	}
 	param := peeloffArg{
 		assocId: int32(id),
+		sd:      0,
 	}
 	optlen := unsafe.Sizeof(param)
-	_, _, err := getsockopt(c.fd(), SCTP_SOCKOPT_PEELOFF, uintptr(unsafe.Pointer(&param)), uintptr(unsafe.Pointer(&optlen)))
+	r0, _, err := getsockopt(c.fd(), SCTP_SOCKOPT_PEELOFF, uintptr(unsafe.Pointer(&param)), uintptr(unsafe.Pointer(&optlen)))
 	if err != nil {
 		return nil, err
 	}
-	return &SCTPConn{_fd: int32(param.sd)}, nil
+	// log.Printf("c.fd: %d, param.sd: %d", c.fd(), param.sd)
+	// p2 := (*peeloffArg)(unsafe.Pointer(&r0))
+	// pl := (*uint32)(unsafe.Pointer(&r1))
+	// log.Printf("c.fd: %d, r0: %+v, p2: %+v, r1: %+v, pl: %+v", c.fd(), r0, p2, r1, *pl)
+	return &SCTPConn{_fd: int32(r0)}, nil
 }
 
 func (c *SCTPConn) SetDeadline(t time.Time) error {
